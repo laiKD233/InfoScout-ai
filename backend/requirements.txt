@@ -2,7 +2,7 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
-pydantic-settings>=2.3.0
+pydantic-settings>=2.14.2
 
 # ===== LangChain（Agent 编排）=====
 langchain>=0.3.0
