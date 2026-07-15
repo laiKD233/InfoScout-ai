@@ -6,7 +6,7 @@ pydantic-settings>=2.3.0
 
 # ===== LangChain（Agent 编排）=====
 langchain>=0.3.0
-langchain-openai>=0.2.0
+langchain-openai>=1.3.3
 langgraph>=0.2.0
 
 # ===== 向量库 =====
