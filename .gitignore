@@ -49,3 +49,43 @@ docs/brainstorms/
 
 /work
 /print
+
+# --- LangChain & AI 专用配置 ---
+
+# LangChain 本地缓存（非常重要！）
+# LangChain 经常使用 SQLite 或 GPTCache 来缓存 LLM 的输出以节省 Token 费用
+.cache/
+langchain.db
+gptcache.db
+*.sqlite
+*.sqlite3
+
+# LangSmith / LangFuse 等调试工具的临时日志
+logs/
+traces.jsonl
+
+# --- 常规 Python 后端配置 ---
+
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境（根据你实际使用的目录名调整）
+venv/
+.venv/
+env/
+.conda/
+
+# IDE 配置文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统垃圾文件
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook 输出（如果你用 Notebook 做实验）
+.ipynb_checkpoints/

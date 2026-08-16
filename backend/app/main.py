@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="InfoScout AI",
-    description="全网智能调研 Agent — 输入主题自动检索多平台，生成带引用的研究简报",
+    description="全网智能调研的多 Agent 协作系统 — 全网检索 → 内容清洗 → 观点提取 → 报告生成",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -73,6 +73,8 @@ async def root():
         "status": "running",
         "docs": "/docs",
         "endpoints": {
+            "research_graph": "/api/v1/research/graph",
+            "research_stream": "/api/v1/research/{task_id}/stream",
             "research": "/api/v1/research",
             "chat": "/api/v1/chat",
             "sources": "/api/v1/sources",

@@ -80,15 +80,17 @@ class ResearchRepository:
         return True
 
     def search(self, query: str, top_k: int = 3) -> list[dict]:
-        """基于 query 的语义相似检索历史调研结果。"""
+        """基于 query 的语义相似检索历史调研结果（向量召回 + BGE 重排）。"""
         if not self.available:
             return []
 
         vector = self.embeddings.embed_query(query)
+        # 先多召回一些候选，交给 BGE-Reranker 精排后再截断，提升命中质量
+        recall_k = max(top_k * 3, top_k)
         results = self.client.search(
             self.collection_name,
             [vector],
-            limit=top_k,
+            limit=recall_k,
             output_fields=["topic", "content", "task_id", "created_at"],
         )
 
@@ -105,7 +107,12 @@ class ResearchRepository:
                         "score": hit.get("distance"),
                     }
                 )
-        return out
+
+        # BGE-Reranker 精排：不可用时 rerank_documents 原样返回（保持向量顺序）
+        from app.db.reranker import rerank_documents
+
+        out = rerank_documents(query, out)
+        return out[:top_k]
 
 
 _repo: ResearchRepository | None = None

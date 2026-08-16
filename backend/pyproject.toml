@@ -1,0 +1,37 @@
+[project]
+name = "infoscout-backend"
+version = "0.1.0"
+description = "InfoScout AI 后端：FastAPI + LangChain Agent + Milvus RAG"
+requires-python = ">=3.12"
+dependencies = [
+  # ===== Web 框架 =====
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.3.0",
+
+  # ===== LangChain（Agent 编排）=====
+  "langchain>=0.3.0",
+  "langchain-core>=0.3.0",
+  "langchain-openai>=0.2.0",
+  "langgraph>=0.2.0",
+
+  # ===== 向量库 =====
+  "pymilvus>=2.4.0",
+]
+
+# ===== 可选依赖（按需安装，不进主依赖以保持 uv.lock/镜像轻量）=====
+# - BGE-Reranker：pip install FlagEmbedding（含 torch，体积大）
+#   未安装时后端自动降级为纯向量相似度检索。
+# - MCP Server：pip install mcp（用于 python -m app.mcp_server 暴露多源 Tools）
+#   FastAPI 主程序不依赖 mcp，未安装不影响调研链路。
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+  "httpx>=0.27.0",
+]
+
+[tool.uv]
+# 后端是应用而非库，不需要打包发布
+package = false

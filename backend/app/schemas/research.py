@@ -36,3 +36,8 @@ class TaskResult(BaseModel):
     returncode: int | None = None
     stderr_tail: str | None = None
     cmd: list[str] | None = None
+    # ===== graph 引擎专属字段（多 Agent 编排产出）=====
+    engine: str | None = None            # "cli" | "graph"
+    subtasks: list[dict] | None = None   # Planner 拆解的子任务
+    opinions: list[dict] | None = None   # 分析 Agent 提取的观点（前端观点图谱用）
+    progress_events: list[dict] | None = None  # 节点执行进度事件

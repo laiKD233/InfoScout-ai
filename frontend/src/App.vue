@@ -1,20 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
 import {
   getSources,
   createResearch,
+  createGraphResearch,
   getResearch,
+  researchStreamUrl,
   type Source,
   type TaskResult,
+  type ProgressEvent,
+  type Subtask,
+  type Opinion,
 } from './api'
+import OpinionGraph from './components/OpinionGraph.vue'
+import ProgressTimeline from './components/ProgressTimeline.vue'
 
 // ===== 状态 =====
 const topic = ref('')
 const days = ref(30)
 const emit = ref('md')
-const mockMode = ref(true)
+const mockMode = ref(false)
 const quickMode = ref(false)
+const engineMode = ref<'graph' | 'cli'>('graph')
 const selectedSources = ref<string[]>([])
 const sources = ref<Source[]>([])
 
@@ -22,7 +30,17 @@ const loading = ref(false)
 const currentTaskId = ref<string | null>(null)
 const result = ref<TaskResult | null>(null)
 const errorMsg = ref('')
+const warningMsg = ref('')
+const elapsedSec = ref(0)
+
+const progressEvents = ref<ProgressEvent[]>([])
+const subtasks = ref<Subtask[]>([])
+const opinions = ref<Opinion[]>([])
+const usedMock = ref(false)
+
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+let es: EventSource | null = null
 
 // ===== 生命周期 =====
 onMounted(async () => {
@@ -35,8 +53,16 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  stopTimers()
+  if (es) es.close()
 })
+
+function stopTimers() {
+  if (pollTimer) clearInterval(pollTimer)
+  if (elapsedTimer) clearInterval(elapsedTimer)
+  pollTimer = null
+  elapsedTimer = null
+}
 
 // ===== 方法 =====
 async function startResearch() {
@@ -45,24 +71,109 @@ async function startResearch() {
     return
   }
   errorMsg.value = ''
+  warningMsg.value = ''
   result.value = null
+  progressEvents.value = []
+  subtasks.value = []
+  opinions.value = []
+  usedMock.value = mockMode.value
   loading.value = true
+  elapsedSec.value = 0
+  stopTimers()
+  if (es) { es.close(); es = null }
+
+  elapsedTimer = setInterval(() => { elapsedSec.value++ }, 1000)
+
+  const payload = {
+    topic: topic.value,
+    emit: emit.value,
+    days: days.value,
+    quick: quickMode.value,
+    mock: mockMode.value,
+    sources: selectedSources.value.length ? selectedSources.value.join(',') : undefined,
+  }
 
   try {
-    const res = await createResearch({
-      topic: topic.value,
-      emit: emit.value,
-      days: days.value,
-      quick: quickMode.value,
-      mock: mockMode.value,
-      sources: selectedSources.value.length ? selectedSources.value.join(',') : undefined,
-    })
-
-    currentTaskId.value = res.data.task_id
-    pollResult(res.data.task_id)
+    if (engineMode.value === 'graph') {
+      const res = await createGraphResearch(payload)
+      currentTaskId.value = res.data.task_id
+      connectStream(res.data.task_id)
+    } else {
+      const res = await createResearch(payload)
+      currentTaskId.value = res.data.task_id
+      pollResult(res.data.task_id)
+    }
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.detail || e.message
     loading.value = false
+    stopTimers()
+  }
+}
+
+function connectStream(taskId: string) {
+  es = new EventSource(researchStreamUrl(taskId))
+
+  es.onmessage = (e) => {
+    if (e.data === '[DONE]') {
+      if (es) es.close()
+      return
+    }
+    try {
+      const msg = JSON.parse(e.data)
+      if (msg.type === 'progress') {
+        progressEvents.value = [...progressEvents.value, msg.event]
+      } else if (msg.type === 'result') {
+        subtasks.value = msg.subtasks || []
+        opinions.value = msg.opinions || []
+        warningMsg.value = msg.error || ''
+        result.value = {
+          task_id: taskId,
+          status: 'done',
+          topic: topic.value,
+          output: msg.report || '',
+          error: msg.error || null,
+          engine: 'graph',
+          subtasks: msg.subtasks || [],
+          opinions: msg.opinions || [],
+        }
+        finish()
+      } else if (msg.type === 'error') {
+        errorMsg.value = msg.detail || '调研失败'
+        finish()
+      }
+    } catch {
+      /* 忽略无法解析的消息 */
+    }
+  }
+
+  es.onerror = () => {
+    // 连接异常时兜底查询一次，防止漏掉最终结果
+    fallbackCheck(taskId)
+  }
+}
+
+function finish() {
+  if (es) { es.close(); es = null }
+  loading.value = false
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+}
+
+async function fallbackCheck(taskId: string) {
+  try {
+    const res = await getResearch(taskId)
+    if (res.data.status === 'done' || res.data.status === 'failed') {
+      result.value = res.data
+      subtasks.value = res.data.subtasks || []
+      opinions.value = res.data.opinions || []
+      if (res.data.status === 'failed') {
+        errorMsg.value = res.data.error || '调研失败'
+      } else {
+        warningMsg.value = res.data.error || ''
+      }
+      finish()
+    }
+  } catch {
+    /* 忽略 */
   }
 }
 
@@ -76,6 +187,7 @@ function pollResult(taskId: string) {
       if (res.data.status === 'done' || res.data.status === 'failed') {
         if (pollTimer) clearInterval(pollTimer)
         pollTimer = null
+        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
         loading.value = false
         if (res.data.status === 'failed') {
           errorMsg.value = res.data.error || '调研失败'
@@ -84,6 +196,7 @@ function pollResult(taskId: string) {
     } catch (e: any) {
       console.error(e)
       if (pollTimer) clearInterval(pollTimer)
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
       loading.value = false
     }
   }, 2000)
@@ -102,6 +215,23 @@ function toggleSource(id: string) {
     selectedSources.value.push(id)
   }
 }
+
+// 按当前引擎过滤可选数据源（graph 引擎支持 web/reddit/youtube/juejin）
+const visibleSources = computed(() =>
+  sources.value.filter((s) => !s.engines || s.engines.includes(engineMode.value))
+)
+
+// 切换引擎时，清掉新引擎不支持的已选数据源
+watch(engineMode, () => {
+  const ids = new Set(visibleSources.value.map((s) => s.id))
+  selectedSources.value = selectedSources.value.filter((id) => ids.has(id))
+})
+
+const stanceText: Record<string, string> = {
+  positive: '正面',
+  negative: '负面',
+  neutral: '中立',
+}
 </script>
 
 <template>
@@ -109,7 +239,7 @@ function toggleSource(id: string) {
     <!-- 头部 -->
     <header class="header">
       <h1>🔍 InfoScout AI</h1>
-      <p>全网智能调研 Agent — 输入主题，自动检索多平台，生成带引用的研究简报</p>
+      <p>多 Agent 协作调研系统 — 全网检索 → 内容清洗 → 观点提取 → 报告生成</p>
     </header>
 
     <!-- 输入区 -->
@@ -123,11 +253,18 @@ function toggleSource(id: string) {
           :disabled="loading"
         />
         <button class="btn btn-primary" @click="startResearch" :disabled="loading || !topic.trim()">
-          {{ loading ? '调研中...' : '开始调研' }}
+          {{ loading ? `调研中... ${elapsedSec}s` : '开始调研' }}
         </button>
       </div>
 
       <div class="options">
+        <div class="option-group">
+          <label>执行引擎</label>
+          <select v-model="engineMode" class="input small" :disabled="loading">
+            <option value="graph">多 Agent 图引擎</option>
+            <option value="cli">CLI 引擎</option>
+          </select>
+        </div>
         <div class="option-group">
           <label>回溯天数</label>
           <input v-model.number="days" type="number" min="1" max="90" class="input small" />
@@ -150,11 +287,13 @@ function toggleSource(id: string) {
       </div>
 
       <!-- 数据源选择 -->
-      <div class="sources" v-if="sources.length">
-        <label class="sources-label">数据源（不选则全部）</label>
+      <div class="sources" v-if="visibleSources.length">
+        <label class="sources-label">
+          数据源（不选则全部；随执行引擎自动切换：{{ engineMode === 'graph' ? '图引擎 web/Reddit/YouTube/掘金/HN/GitHub' : 'CLI 引擎多平台' }}）
+        </label>
         <div class="sources-grid">
           <div
-            v-for="s in sources"
+            v-for="s in visibleSources"
             :key="s.id"
             class="source-chip"
             :class="{ active: selectedSources.includes(s.id) }"
@@ -174,32 +313,78 @@ function toggleSource(id: string) {
       ⚠️ {{ errorMsg }}
     </div>
 
-    <!-- 任务状态 -->
+    <!-- 非致命告警（如某数据源无结果、未配 LLM Key 走降级模板） -->
+    <div v-if="warningMsg && !errorMsg" class="warning-msg">
+      ℹ️ {{ warningMsg }}
+    </div>
+
+    <!-- 任务状态 / 进度 -->
     <div v-if="currentTaskId && loading" class="card status-card">
-      <div class="status-spinner"></div>
-      <div>
-        <strong>任务 ID：{{ currentTaskId }}</strong>
-        <p>正在检索多平台数据，通常需要 30-90 秒...</p>
+      <div v-if="engineMode === 'graph'">
+        <strong class="status-title">任务 ID：{{ currentTaskId }}（多 Agent 图引擎）</strong>
+        <ProgressTimeline :events="progressEvents" />
+      </div>
+      <div v-else class="status-row">
+        <div class="status-spinner"></div>
+        <div>
+          <strong>任务 ID：{{ currentTaskId }}</strong>
+          <p>正在检索多平台数据，通常需要 30-90 秒...</p>
+        </div>
       </div>
     </div>
 
     <!-- 结果展示 -->
-    <div v-if="result && result.status === 'done'" class="card result-card">
-      <div class="result-header">
-        <h2>📋 调研报告：{{ result.topic }}</h2>
-        <span class="badge success">完成</span>
+    <div v-if="result && result.status === 'done'" class="result-area">
+      <!-- 观点图谱 -->
+      <div v-if="opinions.length" class="card">
+        <h2 class="card-title">🕸 观点图谱</h2>
+        <OpinionGraph :topic="result.topic" :opinions="opinions" />
       </div>
-      <div
-        v-if="emit === 'md' || emit === 'compact'"
-        class="result-content markdown-body"
-        v-html="renderMarkdown(result.output)"
-      ></div>
-      <pre v-else class="result-content raw">{{ result.output }}</pre>
+
+      <!-- 子任务拆解 -->
+      <div v-if="subtasks.length" class="card">
+        <h2 class="card-title">🧩 调研拆解（Plan-and-Execute）</h2>
+        <div class="subtask-list">
+          <div v-for="t in subtasks" :key="t.id" class="subtask-chip">
+            <span class="subtask-angle">{{ t.angle }}</span>
+            <span class="subtask-query">{{ t.query }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 观点列表 -->
+      <div v-if="opinions.length" class="card">
+        <h2 class="card-title">💡 核心观点</h2>
+        <ul class="opinion-list">
+          <li v-for="o in opinions" :key="o.id" class="opinion-item">
+            <span class="stance-tag" :class="o.stance">{{ stanceText[o.stance] || o.stance }}</span>
+            <span class="opinion-statement">{{ o.statement }}</span>
+            <span class="opinion-weight">权重 {{ (o.weight * 100).toFixed(0) }}%</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- 报告 -->
+      <div class="card result-card">
+        <div class="result-header">
+          <h2>📋 调研报告：{{ result.topic }}</h2>
+          <div class="result-badges">
+            <span v-if="usedMock" class="badge mock">Mock 演示数据</span>
+            <span class="badge success">完成</span>
+          </div>
+        </div>
+        <div
+          v-if="emit === 'md' || emit === 'compact'"
+          class="result-content markdown-body"
+          v-html="renderMarkdown(result.output)"
+        ></div>
+        <pre v-else class="result-content raw">{{ result.output }}</pre>
+      </div>
     </div>
 
     <!-- 页脚 -->
     <footer class="footer">
-      <p>InfoScout AI v1.0.0 · 基于 last30days-skill · <a href="https://github.com/laiKD233/InfoScout-ai" target="_blank">GitHub</a></p>
+      <p>InfoScout AI v2.0.0 · LangGraph + MCP + Milvus + BGE-Reranker · <a href="https://github.com/laiKD233/InfoScout-ai" target="_blank">GitHub</a></p>
     </footer>
   </div>
 </template>
@@ -260,7 +445,7 @@ function toggleSource(id: string) {
 }
 
 .input.small {
-  width: 120px;
+  width: 130px;
   padding: 8px 12px;
 }
 
@@ -326,7 +511,28 @@ function toggleSource(id: string) {
   font-size: 14px;
 }
 
+.warning-msg {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .status-card {
+  margin-bottom: 24px;
+}
+
+.status-title {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.status-row {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -345,8 +551,98 @@ function toggleSource(id: string) {
   to { transform: rotate(360deg); }
 }
 
-.result-card {
+.result-area {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   margin-bottom: 24px;
+}
+
+.card-title {
+  font-size: 16px;
+  margin-bottom: 12px;
+  color: var(--primary-light);
+}
+
+.subtask-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subtask-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.subtask-angle {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--primary-light);
+  background: rgba(59, 130, 246, 0.15);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.subtask-query {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.opinion-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.opinion-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.stance-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.stance-tag.positive {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--success);
+}
+
+.stance-tag.negative {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--error);
+}
+
+.stance-tag.neutral {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text-muted);
+}
+
+.opinion-statement {
+  flex: 1;
+}
+
+.opinion-weight {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.result-card {
+  margin-bottom: 0;
 }
 
 .result-header {
@@ -367,6 +663,17 @@ function toggleSource(id: string) {
 .badge.success {
   background: rgba(16, 185, 129, 0.2);
   color: var(--success);
+}
+
+.badge.mock {
+  background: rgba(245, 158, 11, 0.2);
+  color: var(--warning);
+}
+
+.result-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .result-content {

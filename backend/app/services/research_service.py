@@ -27,15 +27,36 @@ def build_command(req: ResearchRequest) -> list[str]:
         "--days",
         str(req.days),
     ]
-    if req.quick:
-        cmd.append("--quick")
-    if req.deep:
-        cmd.append("--deep")
+    # mock 模式下不加 --quick/--deep/--search（与 mock 组合会卡死，引擎 bug）
     if req.mock:
         cmd.append("--mock")
-    if req.sources:
-        cmd.extend(["--search", req.sources])
+    else:
+        if req.quick:
+            cmd.append("--quick")
+        if req.deep:
+            cmd.append("--deep")
+        if req.sources:
+            cmd.extend(["--search", req.sources])
     return cmd
+
+
+def _build_env() -> dict[str, str]:
+    """构造子进程环境变量：继承当前环境 + 注入 .env 里的 Web 搜索 Key。
+
+    pydantic-settings 读 .env 后不会回写到 os.environ，而 last30days CLI
+    通过 os.environ 读 Key，所以这里显式注入。
+    """
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SCRIPTS_DIR)
+    s = get_settings()
+    # 只在 .env 配置了 Key 时才注入，避免覆盖宿主已有的值
+    if s.brave_api_key:
+        env["BRAVE_API_KEY"] = s.brave_api_key
+    if s.exa_api_key:
+        env["EXA_API_KEY"] = s.exa_api_key
+    if s.serper_api_key:
+        env["SERPER_API_KEY"] = s.serper_api_key
+    return env
 
 
 async def run_research_async(task_id: str, req: ResearchRequest, store: TaskStore) -> None:
@@ -45,8 +66,7 @@ async def run_research_async(task_id: str, req: ResearchRequest, store: TaskStor
     cmd = build_command(req)
     store.update(task_id, cmd=cmd)
 
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(SCRIPTS_DIR)
+    env = _build_env()
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -56,7 +76,24 @@ async def run_research_async(task_id: str, req: ResearchRequest, store: TaskStor
             cwd=str(SCRIPTS_DIR),
             env=env,
         )
-        stdout, stderr = await proc.communicate()
+        # 超时（默认 600s，可经 RESEARCH_TIMEOUT_SECONDS 覆盖）。
+        # last30days 真实模式是多平台深度爬取，1-3 分钟正常，Reddit 等慢源更久。
+        timeout = get_settings().research_timeout_seconds
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            store.update(
+                task_id,
+                status="failed",
+                error=(
+                    f"调研超时（{timeout}秒）—last30days 引擎未在限定时间内完成。"
+                    "建议：改用多 Agent 图引擎（Reddit/YouTube/掘金等源更快）、"
+                    "减少数据源、缩短天数，或用 Mock 模式。"
+                ),
+            )
+            return
         rc = proc.returncode
         out_text = stdout.decode("utf-8", errors="replace")
         err_text = stderr.decode("utf-8", errors="replace")
@@ -88,8 +125,7 @@ def run_research_sync(
     if mock:
         cmd.append("--mock")
 
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(SCRIPTS_DIR)
+    env = _build_env()
 
     result = subprocess.run(
         cmd,
