@@ -289,7 +289,7 @@ const stanceText: Record<string, string> = {
       <!-- 数据源选择 -->
       <div class="sources" v-if="visibleSources.length">
         <label class="sources-label">
-          数据源（不选则全部；随执行引擎自动切换：{{ engineMode === 'graph' ? '图引擎 web/Reddit/YouTube/掘金/HN/GitHub' : 'CLI 引擎多平台' }}）
+          数据源（不选则全部；随执行引擎自动切换：{{ engineMode === 'graph' ? '图引擎 Web(必应中国)/掘金/B站/思否' : 'CLI 引擎多平台' }}）
         </label>
         <div class="sources-grid">
           <div

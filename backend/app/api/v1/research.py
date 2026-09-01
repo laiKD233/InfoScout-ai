@@ -22,42 +22,40 @@ router = APIRouter()
 
 # 数据源清单。engines 字段标明该数据源由哪个引擎支持：
 # - "graph"：多 Agent 图引擎（web/reddit/youtube/juejin/hackernews/github，Function Calling + MCP）
+#   其中图引擎默认源为境内可达的国内源（web=必应中国、juejin、bilibili、segmentfault）；
+#   reddit/youtube/hackernews/github 为外网源，仅在有外网的 CLI 引擎里可用。
 # - "cli"  ：last30days CLI 引擎（对比基线）
 _SOURCES = [
-    # ===== 多 Agent 图引擎支持（6 源）=====
-    {"id": "web", "name": "Web 通用", "free": True, "needs_key": False, "engines": ["graph"]},
-    {"id": "reddit", "name": "Reddit", "free": True, "needs_key": False, "engines": ["graph", "cli"]},
+    # ===== 多 Agent 图引擎支持（境内可达源）=====
+    {"id": "web", "name": "Web 通用（必应中国）", "free": True, "needs_key": False, "engines": ["graph"]},
+    {"id": "juejin", "name": "稀土掘金", "free": True, "needs_key": False, "engines": ["graph"]},
+    {"id": "bilibili", "name": "B站", "free": True, "needs_key": False, "engines": ["graph"], "note": "中文主流视频平台（境内可达）"},
+    {"id": "segmentfault", "name": "思否社区", "free": True, "needs_key": False, "engines": ["graph"], "note": "中文技术问答社区（境内可达）"},
+    # ===== 外网源（仅 CLI / 有外网环境）=====
+    {"id": "reddit", "name": "Reddit", "free": True, "needs_key": False, "engines": ["cli"]},
     {
         "id": "youtube",
         "name": "YouTube",
         "free": True,
         "needs_key": False,
-        "engines": ["graph", "cli"],
-        "note": "图引擎免 Key 走官方 feeds；CLI 深度转录需 yt-dlp",
-    },
-    {
-        "id": "juejin",
-        "name": "稀土掘金",
-        "free": True,
-        "needs_key": False,
-        "engines": ["graph"],
-        "note": "中文技术社区（公开搜索 API，仅图引擎支持）",
+        "engines": ["cli"],
+        "note": "CLI 深度转录需 yt-dlp",
     },
     {
         "id": "hackernews",
         "name": "Hacker News",
         "free": True,
         "needs_key": False,
-        "engines": ["graph", "cli"],
-        "note": "图引擎走官方 Algolia API（免 Key 且稳定）",
+        "engines": ["cli"],
+        "note": "官方 Algolia API",
     },
     {
         "id": "github",
         "name": "GitHub",
         "free": True,
         "needs_key": False,
-        "engines": ["graph", "cli"],
-        "note": "图引擎走官方搜索 API（免 Key）",
+        "engines": ["cli"],
+        "note": "官方搜索 API",
     },
     # ===== 仅 last30days CLI 引擎支持 =====
     {"id": "arxiv", "name": "arXiv", "free": True, "needs_key": False, "engines": ["cli"]},
@@ -72,8 +70,8 @@ _SOURCES = [
     {"id": "perplexity", "name": "Perplexity", "free": False, "needs_key": True, "engines": ["cli"]},
 ]
 
-# 仅图引擎支持的数据源（CLI 引擎无法检索）
-_GRAPH_ONLY_SOURCES = {"juejin", "web"}
+# 图引擎专属数据源（CLI 引擎无法检索；图引擎默认境内源）
+_GRAPH_ONLY_SOURCES = {"juejin", "web", "bilibili", "segmentfault"}
 
 
 @router.get("/sources")

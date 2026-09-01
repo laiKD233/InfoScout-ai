@@ -1,10 +1,12 @@
-"""
-InfoScout 多源数据源 MCP Server —— 把 Reddit / YouTube / 稀土掘金 / Web /
-Hacker News / GitHub 六个数据源工具以 MCP（Model Context Protocol）方式
+"""InfoScout 多源数据源 MCP Server —— 把 Web（必应中国）/ 稀土掘金 / B站 / 思否 /
+Reddit / YouTube / Hacker News / GitHub 等数据源工具以 MCP（Model Context Protocol）方式
 暴露给外部 Agent（Claude Desktop 等）。
 
 与 Function Calling（LangChain @tool，见 app/agents/tools/source_tools.py）
 共用同一批底层抓取函数，保证两种协议行为一致。
+
+境内可达源（web/juejin/bilibili/segmentfault）在纯国内网络即可用；
+外网源（reddit/youtube/hackernews/github）需要能访问外网的环境。
 
 启动（stdio）：
     python -m app.mcp_server
@@ -14,17 +16,19 @@ Hacker News / GitHub 六个数据源工具以 MCP（Model Context Protocol）方
 from __future__ import annotations
 
 from app.agents.tools.sources import (
+    search_bilibili,
     search_github,
     search_hackernews,
     search_juejin,
     search_reddit,
+    search_segmentfault,
     search_web,
     search_youtube,
 )
 
 
 def build_mcp():
-    """惰性导入 FastMCP 并注册六个数据源工具，返回 server 实例。"""
+    """惰性导入 FastMCP 并注册数据源工具，返回 server 实例。"""
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as e:  # pragma: no cover
@@ -33,49 +37,53 @@ def build_mcp():
     server = FastMCP("infoscout-sources")
 
     @server.tool()
-    def search_reddit(query: str, count: int = 5) -> list[dict]:
-        """检索 Reddit 上关于某主题的讨论，返回帖子列表。
-
-        适合获取真实用户口碑、争议与社区热度（免 API Key，走公开 RSS）。
-        """
-        return search_reddit(query, count)
-
-    @server.tool()
-    def search_youtube(query: str, count: int = 5) -> list[dict]:
-        """检索 YouTube 上关于某主题的视频，返回视频列表。
-
-        适合获取视频测评、教程与观点（免 API Key，走官方 feeds）。
-        """
-        return search_youtube(query, count)
+    def search_web(query: str, count: int = 5) -> list[dict]:
+        """通用网页检索（必应中国，免 Key，境内可用），返回网页结果列表。"""
+        return search_web(query, count)
 
     @server.tool()
     def search_juejin(query: str, count: int = 5) -> list[dict]:
         """检索稀土掘金（juejin.cn）上关于某主题的文章，返回文章列表。
 
-        适合获取中文技术社区的观点、教程与实践经验。
+        适合获取中文技术社区的观点、教程与实践经验（境内可达）。
         """
         return search_juejin(query, count)
 
     @server.tool()
-    def search_hackernews(query: str, count: int = 5) -> list[dict]:
-        """检索 Hacker News 上关于某主题的讨论/文章，返回列表。
+    def search_bilibili(query: str, count: int = 5) -> list[dict]:
+        """检索 B站（bilibili.com）上关于某主题的视频，返回视频列表。
 
-        适合获取技术圈最新动态与观点（免 Key，走官方 Algolia API）。
+        适合获取中文视频测评、教程与观点（境内可达）。
         """
+        return search_bilibili(query, count)
+
+    @server.tool()
+    def search_segmentfault(query: str, count: int = 5) -> list[dict]:
+        """检索思否（segmentfault.com）上关于某主题的技术文章/问答，返回列表。
+
+        适合获取中文技术社区的问答与经验交流（境内可达）。
+        """
+        return search_segmentfault(query, count)
+
+    @server.tool()
+    def search_reddit(query: str, count: int = 5) -> list[dict]:
+        """检索 Reddit 上关于某主题的讨论，返回帖子列表（需能访问外网）。"""
+        return search_reddit(query, count)
+
+    @server.tool()
+    def search_youtube(query: str, count: int = 5) -> list[dict]:
+        """检索 YouTube 上关于某主题的视频，返回视频列表（需能访问外网）。"""
+        return search_youtube(query, count)
+
+    @server.tool()
+    def search_hackernews(query: str, count: int = 5) -> list[dict]:
+        """检索 Hacker News 上关于某主题的讨论/文章，返回列表（需能访问外网）。"""
         return search_hackernews(query, count)
 
     @server.tool()
     def search_github(query: str, count: int = 5) -> list[dict]:
-        """检索 GitHub 上关于某主题的仓库，返回仓库列表。
-
-        适合获取开源项目、star 数与活跃度（免 Key，走官方搜索 API）。
-        """
+        """检索 GitHub 上关于某主题的仓库，返回仓库列表（需能访问外网）。"""
         return search_github(query, count)
-
-    @server.tool()
-    def search_web(query: str, count: int = 5) -> list[dict]:
-        """通用网页检索（DuckDuckGo，免 Key），返回网页结果列表。"""
-        return search_web(query, count)
 
     return server
 
